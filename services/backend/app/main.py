@@ -10,14 +10,20 @@ from app.api.routes import documents, chat
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create tables and enable pgvector on startup
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+        # Create HNSW vector index for fast cosine similarity search
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_chunk_embedding_cosine "
+            "ON document_chunks USING hnsw (embedding vector_cosine_ops)"
+        ))
     yield
 
 
-app = FastAPI(title="DocuChat", version="0.1.0", lifespan=lifespan)
+from app.core.config import settings
+
+app = FastAPI(title="DocuChat", version="0.1.0", lifespan=lifespan, debug=settings.FASTAPI_DEBUG)
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -41,6 +41,11 @@ class MessageResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PaginatedConversations(BaseModel):
+    items: list[ConversationResponse]
+    total: int
+
+
 @router.post("/ask", response_model=AskResponse)
 async def ask_question(
     body: AskRequest,
@@ -71,7 +76,10 @@ async def ask_question(
     db.add(Message(conversation_id=conversation.id, role="user", content=body.question))
 
     # Get AI response
-    result = await ask(db, body.question, conversation_history=history)
+    try:
+        result = await ask(db, body.question, conversation_history=history)
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
 
     # Save assistant message
     db.add(Message(conversation_id=conversation.id, role="assistant", content=result["answer"]))
@@ -84,14 +92,57 @@ async def ask_question(
     )
 
 
-@router.get("/conversations", response_model=list[ConversationResponse])
+@router.get("/conversations", response_model=PaginatedConversations)
 async def list_conversations(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    total_result = await db.execute(select(func.count(Conversation.id)))
+    total = total_result.scalar() or 0
+
+    result = await db.execute(
+        select(Conversation).order_by(Conversation.created_at.desc()).offset(skip).limit(limit)
+    )
+    items = list(result.scalars().all())
+    return PaginatedConversations(items=items, total=total)
+
+
+class RenameRequest(BaseModel):
+    title: str
+
+
+@router.patch("/conversations/{conversation_id}", response_model=ConversationResponse)
+async def rename_conversation(
+    conversation_id: int,
+    body: RenameRequest,
     db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
-        select(Conversation).order_by(Conversation.created_at.desc())
+        select(Conversation).where(Conversation.id == conversation_id)
     )
-    return list(result.scalars().all())
+    conversation = result.scalar_one_or_none()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    conversation.title = body.title[:500]
+    await db.commit()
+    await db.refresh(conversation)
+    return conversation
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Conversation).where(Conversation.id == conversation_id)
+    )
+    conversation = result.scalar_one_or_none()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    await db.delete(conversation)
+    await db.commit()
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageResponse])

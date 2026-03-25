@@ -1,12 +1,17 @@
+import asyncio
+import logging
+
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, AuthenticationError
 
 from app.core.config import settings
 from app.models.document import DocumentChunk
 from app.services.embeddings import generate_embedding
 
-client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+logger = logging.getLogger(__name__)
+
+LLM_TIMEOUT = 60  # seconds
 
 SYSTEM_PROMPT = """You are DocuChat, an AI assistant that helps users understand their documents.
 Answer questions based on the provided document context. Always cite which document and page
@@ -14,9 +19,18 @@ your answer comes from. If the context doesn't contain enough information to ans
 say so clearly rather than making something up."""
 
 
+def _get_llm_client() -> tuple[AsyncOpenAI, str]:
+    """Return an (AsyncOpenAI client, model name) using OpenAI if configured, else Ollama."""
+    if settings.OPENAI_API_KEY:
+        return AsyncOpenAI(api_key=settings.OPENAI_API_KEY), "gpt-4o-mini"
+    return (
+        AsyncOpenAI(base_url=f"{settings.OLLAMA_URL}/v1", api_key="ollama"),
+        settings.OLLAMA_MODEL,
+    )
+
+
 async def vector_search(db: AsyncSession, query_embedding: list[float], top_k: int = 5) -> list[DocumentChunk]:
     """Find the most relevant document chunks using vector similarity."""
-    embedding_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
     result = await db.execute(
         select(DocumentChunk)
         .order_by(DocumentChunk.embedding.cosine_distance(query_embedding))
@@ -45,18 +59,24 @@ async def ask(db: AsyncSession, question: str, conversation_history: list[dict] 
         "content": f"Context from documents:\n\n{context}\n\nQuestion: {question}",
     })
 
-    if not settings.OPENAI_API_KEY:
-        return {
-            "answer": "OpenAI API key not configured. Set OPENAI_API_KEY to enable AI responses.",
-            "sources": [{"document_id": c.document_id, "page": c.page_number, "preview": c.content[:200]} for c in chunks],
-        }
+    client, model = _get_llm_client()
 
-    response = await client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages,
-        temperature=0.2,
-        max_tokens=1024,
-    )
+    try:
+        response = await asyncio.wait_for(
+            client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.2,
+                max_tokens=1024,
+            ),
+            timeout=LLM_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        raise ValueError("The AI model took too long to respond. Please try again.")
+    except AuthenticationError:
+        raise ValueError(
+            "Invalid OpenAI API key. Please check your OPENAI_API_KEY environment variable."
+        )
 
     return {
         "answer": response.choices[0].message.content,

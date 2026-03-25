@@ -9,26 +9,19 @@ export default function Layout({ children }: Props) {
   const location = useLocation();
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
-      <nav
-        style={{
-          width: 220,
-          background: "#1a1a2e",
-          color: "white",
-          padding: "20px 16px",
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        <h1 style={{ fontSize: 22, marginBottom: 32, fontWeight: 700 }}>DocuChat</h1>
-        <NavLink to="/chat" active={location.pathname === "/chat"}>
-          Chat
-        </NavLink>
-        <NavLink to="/documents" active={location.pathname === "/documents"}>
-          Documents
-        </NavLink>
+    <div className="flex min-h-screen bg-gray-50">
+      <nav className="w-56 shrink-0 bg-slate-900 text-white p-5 flex flex-col">
+        <h1 className="text-xl font-bold mb-8 tracking-tight">DocuChat</h1>
+        <div className="flex flex-col gap-1">
+          <NavLink to="/chat" active={location.pathname === "/chat"}>
+            Chat
+          </NavLink>
+          <NavLink to="/documents" active={location.pathname === "/documents"}>
+            Documents
+          </NavLink>
+        </div>
       </nav>
-      <main style={{ flex: 1, padding: 32 }}>{children}</main>
+      <main className="flex-1 p-8 overflow-auto">{children}</main>
     </div>
   );
 }
@@ -37,15 +30,11 @@ function NavLink({ to, active, children }: { to: string; active: boolean; childr
   return (
     <Link
       to={to}
-      style={{
-        display: "block",
-        padding: "10px 12px",
-        borderRadius: 6,
-        marginBottom: 4,
-        color: active ? "white" : "#94a3b8",
-        background: active ? "#2563eb" : "transparent",
-        fontWeight: active ? 600 : 400,
-      }}
+      className={`block px-3 py-2.5 rounded-md text-sm transition-colors ${
+        active
+          ? "bg-blue-600 text-white font-semibold"
+          : "text-slate-400 hover:text-white hover:bg-slate-800"
+      }`}
     >
       {children}
     </Link>

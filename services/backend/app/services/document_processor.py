@@ -1,5 +1,7 @@
 import os
+import shutil
 
+from fastapi import UploadFile
 from pypdf import PdfReader
 
 from app.core.config import settings
@@ -43,10 +45,11 @@ def process_document(file_path: str) -> list[dict]:
     return all_chunks
 
 
-def save_upload(filename: str, content: bytes) -> str:
-    """Save uploaded file to disk, return the file path."""
+async def save_upload(upload_file: UploadFile) -> str:
+    """Stream uploaded file to disk, return the file path."""
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    filename = os.path.basename(upload_file.filename or "upload.pdf")
     file_path = os.path.join(settings.UPLOAD_DIR, filename)
     with open(file_path, "wb") as f:
-        f.write(content)
+        shutil.copyfileobj(upload_file.file, f)
     return file_path
